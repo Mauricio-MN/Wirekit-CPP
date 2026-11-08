@@ -1,4 +1,4 @@
-#include "wirekit.h"
+#include <wirekit/wirekit.h>
 
 #include <atomic>
 #include <cassert>

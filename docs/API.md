@@ -1,19 +1,19 @@
 # Guia da API
 
-Este guia descreve a API publica de `wirekit.h` e o contrato pretendido da biblioteca. O codigo ainda esta em desenvolvimento; consulte a secao [Estado e compatibilidade](#estado-e-compatibilidade) antes de integrar.
+Este guia descreve a API publica de `wirekit/wirekit.h` e o contrato pretendido da biblioteca. O codigo ainda esta em desenvolvimento; consulte a secao [Estado e compatibilidade](#estado-e-compatibilidade) antes de integrar.
 
 ## Instalacao e compilacao
 
-A biblioteca e header-only. Inclua `wirekit.h` no projeto e compile em C++17 ou superior. Por padrao, o hub usa mutexes e um coletor em thread separada; em GCC/Linux, compile e vincule com `-pthread`.
+A biblioteca e header-only. Inclua `wirekit/wirekit.h` no projeto e compile em C++17 ou superior. Por padrao, o hub usa mutexes e um coletor em thread separada; em GCC/Linux, compile e vincule com `-pthread`.
 
 ```cpp
-#include "wirekit.h"
+#include <wirekit/wirekit.h>
 ```
 
 Exemplo de verificacao do header:
 
 ```sh
-printf '#include "wirekit.h"\nint main() { return 0; }\n' \
+printf '#include <wirekit/wirekit.h>\nint main() { return 0; }\n' \
   | g++ -std=c++17 -pthread -Isrc/include -x c++ -fsyntax-only -
 ```
 
@@ -107,7 +107,7 @@ virtual std::shared_ptr<T> createFor(const std::type_info& requester);
 
 Uma implementacao derivada pode comparar `requester` com `typeid(CallerType)` e retornar uma instancia concreta convertivel para `std::shared_ptr<T>`. Os tipos concretos devem implementar `T` e ser destruidos corretamente por meio da interface, que deve ter destrutor virtual quando for polimorfica.
 
-Para reduzir o boilerplate da classe derivada, `wirekit.h` define a macro `WIREKIT_DECLARE_FACTORY(Nome, Interface)`. Ela declara a subclasse e o override da fabrica; a politica de selecao continua implementada pelo usuario, de preferencia no `.cpp`:
+Para reduzir o boilerplate da classe derivada, `wirekit/wirekit.h` define a macro `WIREKIT_DECLARE_FACTORY(Nome, Interface)`. Ela declara a subclasse e o override da fabrica; a politica de selecao continua implementada pelo usuario, de preferencia no `.cpp`:
 
 ```cpp
 namespace app {
@@ -213,7 +213,7 @@ Ele imprime `Hub copy: 4`, `Original object: 3` e `Shared object: 11`: a primeir
 
 ### DI experimental
 
-Com `WIREKIT_ENABLE_DI` definido antes de `#include "wirekit.h"`, o header `wirekit/container.h` e incluido e expoe `wirekit::Container`. As dependencias sao deduzidas do construtor: cada parametro `std::shared_ptr<T>` (ou `const std::shared_ptr<T>&`) e resolvido no container. Se houver varios construtores viaveis, vale o que tem mais parametros injetaveis (ate 8); parametros de outros tipos nao sao suportados.
+Com `WIREKIT_ENABLE_DI` definido antes de `#include <wirekit/wirekit.h>`, o header `wirekit/container.h` e incluido e expoe `wirekit::Container`. As dependencias sao deduzidas do construtor: cada parametro `std::shared_ptr<T>` (ou `const std::shared_ptr<T>&`) e resolvido no container. Se houver varios construtores viaveis, vale o que tem mais parametros injetaveis (ate 8); parametros de outros tipos nao sao suportados.
 
 ```cpp
 struct Logger : ILogger { explicit Logger(std::shared_ptr<IClock>); };

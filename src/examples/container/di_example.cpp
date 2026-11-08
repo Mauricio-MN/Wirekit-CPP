@@ -3,7 +3,7 @@
 // Swap one line in wire() and every class gets another implementation.
 // Build: g++ -std=c++17 -pthread -Isrc/include src/examples/container/di_example.cpp
 #define WIREKIT_ENABLE_DI
-#include "wirekit.h"
+#include <wirekit/wirekit.h>
 
 #include <iostream>
 #include <memory>

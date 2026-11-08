@@ -1,5 +1,9 @@
 # Wirekit
 
+<p align="center">
+  <img src="docs/wkit.png" alt="Wirekit: C++17, header-only" width="600">
+</p>
+
 Biblioteca C++ header-only (C++17) com duas peças que funcionam juntas ou separadas:
 
 - **`wirekit::Container`**: injeção de dependência. Cada classe declara no construtor o que precisa, e o container monta e entrega. Opcional, ligado por macro.
@@ -29,7 +33,7 @@ A sincronização protege o registro, não o estado interno de `T`. Se duas thre
 
 ```cpp
 #define WIREKIT_ENABLE_DI
-#include "wirekit.h"
+#include <wirekit/wirekit.h>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -63,7 +67,7 @@ O [`src/examples/container/di_example.cpp`](src/examples/container/di_example.cp
 Registre as instâncias no canal desejado e chame o método pela interface. Cada chamada abaixo executa `update` nas duas instâncias, em ordem de registro:
 
 ```cpp
-#include "wirekit.h"
+#include <wirekit/wirekit.h>
 #include <memory>
 
 struct RenderStage {
@@ -82,7 +86,7 @@ int main() {
 
 ## Início rápido
 
-Inclua `wirekit.h` no projeto e adicione `src/include` ao include path (`-Isrc/include`). O requisito mínimo é C++17. Para habilitar o container DI, defina `WIREKIT_ENABLE_DI` antes do include (ou inclua `wirekit/container.h` diretamente); sem isso, `wirekit::Container` não existe e `Hub` não muda. O modo padrão usa threads; em GCC/Linux, compile com `-pthread`. Aplicações estritamente single-thread podem definir `WIREKIT_SINGLE_THREAD` em todas as unidades de tradução para remover locks e a thread de coleta; nesse modo, chame `collectGarbage()` quando quiser coletar canais sem handles externos.
+Inclua `wirekit/wirekit.h` no projeto e adicione `src/include` ao include path (`-Isrc/include`). O requisito mínimo é C++17. Para habilitar o container DI, defina `WIREKIT_ENABLE_DI` antes do include (ou inclua `wirekit/container.h` diretamente); sem isso, `wirekit::Container` não existe e `Hub` não muda. O modo padrão usa threads; em GCC/Linux, compile com `-pthread`. Aplicações estritamente single-thread podem definir `WIREKIT_SINGLE_THREAD` em todas as unidades de tradução para remover locks e a thread de coleta; nesse modo, chame `collectGarbage()` quando quiser coletar canais sem handles externos.
 
 A biblioteca não possui dependências externas. O [guia da API](docs/API.md) descreve os canais, as fábricas, o despacho de métodos e a integração. O [`src/examples/hub/hub_example.cpp`](src/examples/hub/hub_example.cpp) é um roteiro comentado para quem está conhecendo o padrão.
 
@@ -136,7 +140,7 @@ O segundo teste usa `WIREKIT_SINGLE_THREAD` e compila sem `-pthread`. Essa macro
 
 O exemplo separa responsabilidades em `src/examples/hub/`: `iuser.h` define a interface, `user_staff.*` e `user_normal.*` contêm implementações, e `user_service.*` implementa a fábrica. A macro `WIREKIT_DECLARE_FACTORY(UserService, IUser)` resume a declaração do hub, mantendo a regra de seleção no `.cpp`. O caller passado a `addInstance(channel, caller)` não é retido; [`registration_modes.cpp`](src/examples/hub/registration_modes.cpp) demonstra registro por cópia e por `shared_ptr`.
 
-Alterações nos corpos `.cpp` exigem recompilar essa unidade e relinkar a aplicação. Alterações em headers compartilhados, incluindo `wirekit.h`, exigem recompilar as unidades que os incluem. Consulte o [guia da API](docs/API.md) para detalhes de overloads, ownership, concorrência e benchmarks.
+Alterações nos corpos `.cpp` exigem recompilar essa unidade e relinkar a aplicação. Alterações em headers compartilhados, incluindo `wirekit/wirekit.h`, exigem recompilar as unidades que os incluem. Consulte o [guia da API](docs/API.md) para detalhes de overloads, ownership, concorrência e benchmarks.
 
 ## Estado da implementação
 
@@ -166,7 +170,7 @@ docs/              guia da API
 | `SERVICE_PROVIDER_SINGLE_THREAD` | `WIREKIT_SINGLE_THREAD` |
 | `SERVICE_PROVIDER_ENABLE_DI` | `WIREKIT_ENABLE_DI` |
 | `SERVICE_PROVIDER(Nome, Iface)` | `WIREKIT_DECLARE_FACTORY(Nome, Iface)` |
-| `serviceProv.h`, `serviceProvDI.h` | `wirekit.h` (inclui `wirekit/hub.h` e `wirekit/container.h`) |
+| `serviceProv.h`, `serviceProvDI.h` | `wirekit/wirekit.h` (inclui `wirekit/hub.h` e `wirekit/container.h`) |
 
 `addInstance`, `callMethod`, `callMethodGet`, `erase`, `clear`, `bind`, `bindFactory`, `bindInstance`, `resolve` e `Lifetime` não mudaram.
 

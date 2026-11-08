@@ -1,6 +1,6 @@
 #define WIREKIT_SINGLE_THREAD
 #define WIREKIT_ENABLE_DI
-#include "wirekit.h"
+#include <wirekit/wirekit.h>
 
 #include <cassert>
 #include <memory>

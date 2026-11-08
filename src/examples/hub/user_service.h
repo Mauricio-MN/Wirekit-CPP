@@ -1,7 +1,7 @@
 #ifndef EXAMPLE_USER_SERVICE_H
 #define EXAMPLE_USER_SERVICE_H
 
-#include "wirekit.h"
+#include <wirekit/wirekit.h>
 #include "iuser.h"
 
 namespace example {

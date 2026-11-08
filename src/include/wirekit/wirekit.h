@@ -1,10 +1,10 @@
 #ifndef WIREKIT_H
 #define WIREKIT_H
 
-#include "wirekit/hub.h"
+#include "hub.h"
 
 #ifdef WIREKIT_ENABLE_DI
-#include "wirekit/container.h"
+#include "container.h"
 #endif
 
 #endif

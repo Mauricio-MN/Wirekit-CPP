@@ -1,5 +1,5 @@
 #define WIREKIT_SINGLE_THREAD
-#include "wirekit.h"
+#include <wirekit/wirekit.h>
 
 #include <cassert>
 #include <memory>
