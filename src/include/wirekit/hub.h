@@ -706,4 +706,28 @@ public:
         std::shared_ptr<InterfaceType> createFor(std::type_info& requester) override; \
     }
 
+#define WIREKIT_DETAIL_FACTORY_ENUM_ENTRY(RequesterType, FactoryFunction) RequesterType,
+#define WIREKIT_DETAIL_FACTORY_MATCH_ENTRY(RequesterType, FactoryFunction) \
+    if (requester == typeid(RequesterType)) { \
+        wirekitFactoryCase = wirekit_factory_case::RequesterType; \
+    }
+#define WIREKIT_DETAIL_FACTORY_SWITCH_ENTRY(RequesterType, FactoryFunction) \
+    case wirekit_factory_case::RequesterType: \
+        return FactoryFunction();
+
+#define WIREKIT_DEFINE_FACTORY(ServiceName, InterfaceType, FactoryCases) \
+    std::shared_ptr<InterfaceType> ServiceName::createFor(std::type_info& requester) { \
+        enum class wirekit_factory_case { \
+            Unknown, \
+            FactoryCases(WIREKIT_DETAIL_FACTORY_ENUM_ENTRY) \
+        }; \
+        wirekit_factory_case wirekitFactoryCase = wirekit_factory_case::Unknown; \
+        FactoryCases(WIREKIT_DETAIL_FACTORY_MATCH_ENTRY) \
+        switch (wirekitFactoryCase) { \
+            FactoryCases(WIREKIT_DETAIL_FACTORY_SWITCH_ENTRY) \
+        default: \
+            throw std::invalid_argument("No matching Hub factory for requester"); \
+        } \
+    }
+
 #endif

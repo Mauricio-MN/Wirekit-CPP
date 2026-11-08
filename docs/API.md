@@ -110,7 +110,7 @@ virtual std::shared_ptr<T> createFor(const std::type_info& requester);
 
 Uma implementação derivada pode comparar `requester` com `typeid(CallerType)` e retornar uma instância concreta convertível para `std::shared_ptr<T>`. Os tipos concretos devem implementar `T` e ser destruídos corretamente por meio da interface, que deve ter destrutor virtual quando for polimórfica.
 
-Para reduzir o boilerplate da classe derivada, `wirekit/wirekit.h` define a macro `WIREKIT_DECLARE_FACTORY(Nome, Interface)`. Ela declara a subclasse e o override da fábrica; a política de seleção continua implementada pelo usuário, de preferência no `.cpp`:
+Para reduzir o boilerplate, `wirekit/wirekit.h` define `WIREKIT_DECLARE_FACTORY(Nome, Interface)` para declarar a subclasse e `WIREKIT_DEFINE_FACTORY(Nome, Interface, Casos)` para definir `createFor`:
 
 ```cpp
 namespace app {
@@ -119,15 +119,17 @@ WIREKIT_DECLARE_FACTORY(UserService, IUser);
 ```
 
 ```cpp
-std::shared_ptr<app::IUser> app::UserService::createFor(std::type_info& requester) {
-  if (requester == typeid(StaffRequest)) {
-    return std::make_shared<UserStaff>();
-  }
-  throw std::invalid_argument("Unsupported requester");
+#define USER_SERVICE_CASES(X) \
+  X(StaffRequest, createStaff) \
+  X(NormalRequest, createNormal)
+
+namespace app {
+WIREKIT_DEFINE_FACTORY(UserService, IUser, USER_SERVICE_CASES)
 }
+#undef USER_SERVICE_CASES
 ```
 
-A macro não cria implementações automaticamente; ela apenas padroniza a declaração do hub e mantém a fábrica fora do header.
+Cada entrada associa um tipo solicitante a uma função fornecida pela aplicação, que retorna `std::shared_ptr<IUser>`. A macro compara `requester` com os `typeid` listados, converte o resultado em um `switch` com `case` e lança `std::invalid_argument` no `default`. Assim, o código de criação fica fora da macro e pode usar qualquer estratégia; não é necessário usar `std::make_shared`.
 
 ## Remover canais
 
@@ -168,7 +170,7 @@ O arquivo [`src/examples/hub/hub_example.cpp`](../src/examples/hub/hub_example.c
 - `iuser.h` declara a interface compartilhada.
 - `user_staff.h/.cpp` e `user_normal.h/.cpp` declaram e implementam as classes concretas.
 - `request_types.h` declara tipos vazios usados para identificar cada solicitante.
-- `user_service.h/.cpp` implementa a fábrica; este é o único componente que inclui as classes concretas.
+- `user_service.h/.cpp` declara o hub especializado e implementa a fábrica com `WIREKIT_DEFINE_FACTORY`; as funções criadoras mantêm a construção das classes concretas separada do despacho.
 - `src/examples/hub/hub_example.cpp` cria o hub, registra as duas implementações no mesmo canal, demonstra o despacho e também usa o overload baseado em objeto caller.
 - `registration_modes.cpp` demonstra as sobrecargas que copiam um objeto concreto ou compartilham um `std::shared_ptr<T>`.
 

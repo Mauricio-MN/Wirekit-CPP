@@ -59,20 +59,43 @@ public:
 };
 
 struct Caller {};
+struct UnknownCaller {};
+
+std::shared_ptr<IService> makeCallerService() {
+    return std::make_shared<ServiceImpl>(10);
+}
+
+std::shared_ptr<IService> makeDefaultService() {
+    return std::make_shared<ServiceImpl>(1);
+}
 
 class TestHub final : public wirekit::Hub<IService> {
 public:
     using wirekit::Hub<IService>::Hub;
 
-    std::shared_ptr<IService> createFor(std::type_info& requester) override {
-        return std::make_shared<ServiceImpl>(requester == typeid(Caller) ? 10 : 1);
-    }
+    std::shared_ptr<IService> createFor(std::type_info& requester) override;
 };
+
+#define TEST_HUB_FACTORY_CASES(X) \
+    X(Caller, makeCallerService) \
+    X(ServiceImpl, makeDefaultService)
+
+WIREKIT_DEFINE_FACTORY(TestHub, IService, TEST_HUB_FACTORY_CASES)
+
+#undef TEST_HUB_FACTORY_CASES
 
 int main() {
     TestHub hub(10);
     wirekit::Channel namedChannel("shared");
     Caller caller;
+    bool unknownRequesterReported = false;
+    try {
+        hub.addInstance<UnknownCaller>(namedChannel);
+    } catch (const std::invalid_argument&) {
+        unknownRequesterReported = true;
+    }
+    assert(unknownRequesterReported);
+
     const auto channel = hub.addInstance(namedChannel, caller);
     const auto reusedChannel = hub.registerChannel("shared");
     assert(channel == reusedChannel);
