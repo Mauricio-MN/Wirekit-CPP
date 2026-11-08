@@ -24,9 +24,11 @@ printf '#include "serviceProv.h"\nint main() { return 0; }\n' \
 - **Provedor (`service::ServiceProvider<T>`)**: mantem instancias de `T` por contexto, cria instancias por meio de uma fabrica virtual e despacha chamadas de metodo para todas as instancias do contexto.
 - **Fabrica**: uma classe derivada pode sobrescrever `getNewInstance` e escolher uma implementacao concreta a partir do tipo de quem solicitou o servico.
 
-`CONTEXT` e um alias legado definido como macro para `std::shared_ptr<service::Context>`.
+`service::ContextPtr` e o handle compartilhado de um contexto.
 
 ## Context
+
+`service::Context` representa a chave nomeada de um grupo de instancias dentro de um provider. Nao e uma instancia de servico nem um escopo DI hierarquico. `service::ContextPtr` e o handle compartilhado desse grupo.
 
 `service::Context` aceita um nome opcional. O construtor sem argumentos usa `"Default"`.
 
@@ -38,11 +40,11 @@ auto sharedContext = std::make_shared<service::Context>("request-42");
 
 `getContext()` e `getName()` retornam o identificador do contexto. `registerContext(name)` cria o contexto quando necessario e retorna o contexto ja registrado quando o nome existe.
 
-`findContext(name)` apenas consulta o registro. Retorna um `CONTEXT` nulo quando nao encontra o nome e nunca cria um contexto. Use essa funcao para recuperacao; reserve `registerContext` para criacao-ou-reutilizacao.
+`findContext(name)` apenas consulta o registro. Retorna um `service::ContextPtr` nulo quando nao encontra o nome e nunca cria um contexto. Use essa funcao para recuperacao; reserve `registerContext` para criacao-ou-reutilizacao.
 
 ## Criacao do provedor
 
-O construtor sem argumentos usa o intervalo padrao do coletor de contextos. O construtor que recebe um inteiro configura esse intervalo em milissegundos. O provedor deve permanecer vivo enquanto for usado; sua destruicao interrompe e aguarda o coletor. Handles `CONTEXT` mantem o contexto vivo, mas nao estendem a vida do provedor.
+O construtor sem argumentos usa o intervalo padrao do coletor de contextos. O construtor que recebe um inteiro configura esse intervalo em milissegundos. O provedor deve permanecer vivo enquanto for usado; sua destruicao interrompe e aguarda o coletor. Handles `service::ContextPtr` mantem o contexto vivo, mas nao estendem a vida do provider.
 
 ```cpp
 service::ServiceProvider<IMyService> provider;
@@ -62,7 +64,7 @@ Para interfaces abstratas, sobrescreva a fabrica antes de solicitar instancias: 
 
 ## Adicionar instancias
 
-As sobrecargas de `addInstance` aceitam um contexto por referencia ou por `CONTEXT`. Para escolher a fabrica por um tipo solicitante, prefira a forma parametrizada:
+As sobrecargas de `addInstance` aceitam um contexto por referencia ou por `service::ContextPtr`. Para escolher a fabrica por um tipo solicitante, prefira a forma parametrizada:
 
 ```cpp
 auto context = provider.addInstance<StaffRequest>(requestContext);
@@ -77,9 +79,9 @@ As outras formas disponiveis sao:
 - `addInstance(context, object)` copia o objeto; requer que `T` seja concreto e copiavel.
 - `addInstance(context, shared_ptr)` compartilha uma instancia existente, recomendado para interfaces abstratas e para evitar copia ou slicing.
 
-Cada chamada adiciona uma instancia ao grupo do contexto; nao e uma operacao de registro singleton. O valor retornado e o `CONTEXT` registrado, que deve ser mantido enquanto o cliente precisar manter o grupo ativo. `CONTEXT` e o macro legado para `std::shared_ptr<service::Context>`; por exemplo, uma funcao pode receber `const CONTEXT&` sem repetir o tipo longo.
+Cada chamada adiciona uma instancia ao grupo do contexto; nao e uma operacao de registro singleton. O valor retornado e o `service::ContextPtr` para enderecar o grupo. O provider mantem grupos com instancias registradas ate `erase` ou `clear`; descartar o handle nao apaga os servicos. O coletor automatico remove somente contextos sem instancias e sem handles externos.
 
-Os objetos de servico sao mantidos por `std::shared_ptr` dentro do provedor. Nao ha `new` nem ponteiro bruto na API do exemplo. Solte os handles `CONTEXT` quando terminar ou chame `erase` para remover o grupo imediatamente; handles ainda vivos impedem a coleta automatica daquele contexto.
+Os objetos de servico sao mantidos por `std::shared_ptr` dentro do provider. Nao ha `new` nem ponteiro bruto na API do exemplo. Chame `erase` ou `clear` para liberar as referencias do provider; handles externos e snapshots de chamadas em andamento podem manter os objetos vivos.
 
 ## Despachar metodos
 
@@ -92,7 +94,7 @@ provider.callMethod(context, &IMyService::reset, 7);
 auto results = provider.callMethodGet(context, &IMyService::value);
 ```
 
-O metodo deve ser invocavel em `T` com os argumentos informados. O tipo de retorno de `callMethodGet` e deduzido do metodo.
+O metodo deve ser invocavel em `T` com os argumentos informados. O tipo de retorno de `callMethodGet` e deduzido do metodo. Um contexto sem instancias lanca `std::out_of_range`; um `ContextPtr` nulo lanca `std::invalid_argument`. Se um callback lanca, a excecao se propaga e as instancias seguintes nao sao chamadas. Os argumentos sao recebidos por valor e reutilizados em cada callback; metodos que recebem parametros por valor podem causar copias por instancia.
 
 ## Fabrica de implementacoes
 
@@ -208,5 +210,21 @@ g++ -std=c++17 -pthread -I. examples/service_provider/registration_modes.cpp -o 
 Ele imprime `Provider copy: 4`, `Original object: 3` e `Shared object: 11`: a primeira sobrecarga copia o valor, enquanto a segunda compartilha a instancia fornecida.
 
 ## Estado e compatibilidade
+
+### DI experimental
+
+Com `SERVICE_PROVIDER_ENABLE_DI` definido antes de `#include "serviceProv.h"`, o header `serviceProvDI.h` e incluido e expoe `service::Container`. As dependencias sao deduzidas do construtor: cada parametro `std::shared_ptr<T>` (ou `const std::shared_ptr<T>&`) e resolvido no container. Se houver varios construtores viaveis, vale o que tem mais parametros injetaveis (ate 8); parametros de outros tipos nao sao suportados.
+
+```cpp
+struct Logger : ILogger { explicit Logger(std::shared_ptr<IClock>); };
+struct Handler { Handler(std::shared_ptr<ILogger>, std::shared_ptr<IClock>); };
+
+service::Container container;
+container.bind<IClock, SystemClock>();                           // singleton
+container.bind<ILogger, Logger>(service::Lifetime::Transient);   // IClock injetado
+auto handler = container.make<Handler>();                        // consumidor nao registrado
+```
+
+`bind<I, Impl, Deps...>()` com lista explicita ainda e aceito, e `bindFactory`/`bindInstance` cobrem fabricas manuais e instancias prontas. `resolve` lanca `std::out_of_range` sem binding e `std::logic_error` em dependencia circular. Fabricas executam sem o mutex do registro, entao podem resolver outras dependencias. Um singleton e criado exatamente uma vez, mesmo com varias threads pedindo ao mesmo tempo: a criacao e serializada por um mutex recursivo proprio, e quem chega depois recebe a instancia pronta. Consequencia: uma fabrica de singleton nao deve bloquear esperando outra thread que tambem resolva um singleton. Fabricas de `Transient` rodam em paralelo. Destrutores dos servicos (ao substituir um binding, em `clear()` ou na destruicao do container) rodam fora dos mutexes, mas o ultimo `shared_ptr` pode ser liberado por qualquer thread, e a destruicao do container nao pode concorrer com `resolve`/`make`; um destrutor tambem nao deve chamar `resolve`. A macro so adiciona uma classe, entao nao muda o layout de `ServiceProvider`. A API e experimental e pode mudar.
 
 O header original nao compila em C++17. Os planos de trabalho e o resultado de sua execucao estao registrados em [`../ROADMAP.md`](../ROADMAP.md). Ate que a compilacao e os testes passem, as descricoes acima registram o contrato pretendido, nao uma garantia da implementacao.

@@ -16,7 +16,7 @@ int main(int argc, char* argv[]) {
 
     service::ServiceProvider<int> provider(collectionIntervalMs);
     std::vector<std::string> contextNames;
-    std::vector<CONTEXT> contextHandles;
+    std::vector<service::ContextPtr> contextHandles;
     contextNames.reserve(contextCount);
     contextHandles.reserve(contextCount);
 

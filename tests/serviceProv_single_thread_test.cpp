@@ -40,4 +40,11 @@ int main() {
     provider.clear();
     assert(!provider.findContext("single-thread"));
     assert(provider.registerContext("single-thread"));
+
+    service::Context retainedContext("retained-service");
+    Counter retainedService{11};
+    provider.addInstance(retainedContext, retainedService);
+    provider.collectGarbage();
+    assert((provider.callMethodGet(retainedContext, &Counter::get) == std::vector<int>{11}));
+    provider.erase(retainedContext);
 }

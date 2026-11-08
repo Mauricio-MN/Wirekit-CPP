@@ -24,6 +24,12 @@ namespace service {
 
 namespace detail {
 
+template <class>
+struct IsSharedPtr : std::false_type {};
+
+template <class T>
+struct IsSharedPtr<std::shared_ptr<T>> : std::true_type {};
+
 #ifdef SERVICE_PROVIDER_SINGLE_THREAD
 class ProviderMutex {
 public:
@@ -60,9 +66,9 @@ public:
 
 };
 
-} // namespace service
+using ContextPtr = std::shared_ptr<Context>;
 
-#define CONTEXT std::shared_ptr<service::Context>
+} // namespace service
 
 namespace service {
 
@@ -71,20 +77,20 @@ class ServiceProvider {
 private:
     using InstanceList = std::vector<std::shared_ptr<T>>;
     std::unordered_map<std::string, std::shared_ptr<const InstanceList>> objs;
-    std::unordered_map<std::string, CONTEXT> contextMap;
+    std::unordered_map<std::string, ContextPtr> contextMap;
     mutable detail::ProviderMutex contextsMutex;
 #ifndef SERVICE_PROVIDER_SINGLE_THREAD
     std::atomic_bool collect{true};
     std::condition_variable garbageCollectorWake;
     int garbageWait;
-    std::thread garbageCollectorThread;
     std::string garbageCursor;
     bool hasGarbageCursor = false;
+    std::thread garbageCollectorThread;
 
     static constexpr std::size_t garbageCollectionBatchSize = 4;
 #endif
 
-    CONTEXT registerContextLocked(const CONTEXT& context) {
+    ContextPtr registerContextLocked(const ContextPtr& context) {
         const std::string& contextId = context->getContextRef();
         const auto it = contextMap.find(contextId);
         if (it != contextMap.end()) {
@@ -96,14 +102,14 @@ private:
     }
 
     template <class InstanceFactory>
-    CONTEXT addInstanceImpl(Context& context, InstanceFactory&& factory) {
+    ContextPtr addInstanceImpl(Context& context, InstanceFactory&& factory) {
         std::shared_ptr<T> instance = std::forward<InstanceFactory>(factory)();
         if (!instance) {
             throw std::logic_error("ServiceProvider factory returned a null instance");
         }
 
         std::lock_guard<detail::ProviderMutex> lock(contextsMutex);
-        CONTEXT registeredContext = registerContextLocked(std::make_shared<Context>(context));
+        ContextPtr registeredContext = registerContextLocked(std::make_shared<Context>(context));
         auto& currentInstances = objs[registeredContext->getContextRef()];
         auto updatedInstances = currentInstances
             ? std::make_shared<InstanceList>(*currentInstances)
@@ -128,7 +134,7 @@ private:
 
     void eraseContextById(const std::string& contextId) {
         std::shared_ptr<const InstanceList> removedInstances;
-        CONTEXT removedContext;
+        ContextPtr removedContext;
         {
             std::lock_guard<detail::ProviderMutex> lock(contextsMutex);
             const auto instancesIt = objs.find(contextId);
@@ -165,8 +171,7 @@ private:
             }
 
             while (remaining > 0 && collect.load()) {
-                std::vector<std::shared_ptr<const InstanceList>> removedInstances;
-                std::vector<CONTEXT> removedContexts;
+                std::vector<ContextPtr> removedContexts;
                 std::size_t processed = 0;
                 {
                     std::lock_guard<detail::ProviderMutex> lock(contextsMutex);
@@ -196,12 +201,7 @@ private:
                             it = contextMap.begin();
                         }
 
-                        if (current->second.use_count() == 1) {
-                            const auto instancesIt = objs.find(current->first);
-                            if (instancesIt != objs.end()) {
-                                removedInstances.push_back(std::move(instancesIt->second));
-                                objs.erase(instancesIt);
-                            }
+                        if (current->second.use_count() == 1 && objs.find(current->first) == objs.end()) {
                             removedContexts.push_back(std::move(current->second));
                             it = contextMap.erase(current);
                             if (it == contextMap.end() && !contextMap.empty()) {
@@ -227,7 +227,6 @@ private:
                 }
                 if (remaining > 0) {
                     removedContexts.clear();
-                    removedInstances.clear();
                     std::this_thread::sleep_for(std::chrono::microseconds(50));
                 }
             }
@@ -242,8 +241,9 @@ public:
     explicit ServiceProvider(int) {}
 #else
     explicit ServiceProvider(int garbageWaitMilliseconds)
-        : garbageWait(std::max(garbageWaitMilliseconds, 1)),
-          garbageCollectorThread(&ServiceProvider::checkContextsThread, this) {}
+                : garbageWait(std::max(garbageWaitMilliseconds, 1)) {
+                garbageCollectorThread = std::thread(&ServiceProvider::checkContextsThread, this);
+        }
 #endif
 
     ServiceProvider(const ServiceProvider&) = delete;
@@ -251,7 +251,10 @@ public:
 
     virtual ~ServiceProvider() {
 #ifndef SERVICE_PROVIDER_SINGLE_THREAD
+    {
+        std::lock_guard<detail::ProviderMutex> lock(contextsMutex);
         collect.store(false);
+    }
         garbageCollectorWake.notify_all();
         if (garbageCollectorThread.joinable()) {
             garbageCollectorThread.join();
@@ -260,16 +263,16 @@ public:
         clear();
     }
 
-    CONTEXT registerContext(std::string contextID) {
+    ContextPtr registerContext(std::string contextID) {
         Context context(std::move(contextID));
         return registerContext(context);
     }
 
-    CONTEXT registerContext(Context& context) {
+    ContextPtr registerContext(Context& context) {
         return registerContext(std::make_shared<Context>(context));
     }
 
-    CONTEXT registerContext(CONTEXT context) {
+    ContextPtr registerContext(ContextPtr context) {
         if (!context) {
             throw std::invalid_argument("ServiceProvider context must not be null");
         }
@@ -278,21 +281,23 @@ public:
         return registerContextLocked(context);
     }
 
-    CONTEXT findContext(const std::string& contextID) const {
+    ContextPtr findContext(const std::string& contextID) const {
         std::lock_guard<detail::ProviderMutex> lock(contextsMutex);
         const auto it = contextMap.find(contextID);
-        return it == contextMap.end() ? CONTEXT{} : it->second;
+        return it == contextMap.end() ? ContextPtr{} : it->second;
     }
 
-    template <class CallClass>
-    CONTEXT addInstance(Context& context, CallClass& callClass) {
+    template <class CallClass,
+              std::enable_if_t<!detail::IsSharedPtr<std::decay_t<CallClass>>::value, int> = 0>
+    ContextPtr addInstance(Context& context, CallClass& callClass) {
         return addInstanceImpl(context, [this, &callClass] {
             return getNewInstance(callClass);
         });
     }
 
-    template <class CallClass>
-    CONTEXT addInstance(CONTEXT context, CallClass& callClass) {
+    template <class CallClass,
+              std::enable_if_t<!detail::IsSharedPtr<std::decay_t<CallClass>>::value, int> = 0>
+    ContextPtr addInstance(ContextPtr context, CallClass& callClass) {
         if (!context) {
             throw std::invalid_argument("ServiceProvider context must not be null");
         }
@@ -300,45 +305,62 @@ public:
     }
 
     template <typename AlternativeClass>
-    CONTEXT addInstance(Context& context) {
+    ContextPtr addInstance(Context& context) {
         return addInstanceImpl(context, [this] {
             return getNewInstance<AlternativeClass>();
         });
     }
 
     template <typename AlternativeClass>
-    CONTEXT addInstance(CONTEXT context) {
+    ContextPtr addInstance(ContextPtr context) {
         if (!context) {
             throw std::invalid_argument("ServiceProvider context must not be null");
         }
         return addInstance<AlternativeClass>(*context);
     }
 
-    CONTEXT addInstance(Context& context, T& obj) {
+    ContextPtr addInstance(Context& context, T& obj) {
         return addInstanceImpl(context, [&obj] {
             return std::make_shared<T>(obj);
         });
     }
 
-    CONTEXT addInstance(Context& context, std::shared_ptr<T> obj) {
+    ContextPtr addInstance(Context& context, std::shared_ptr<T> obj) {
         if (!obj) {
             throw std::invalid_argument("ServiceProvider instance must not be null");
         }
         return addInstanceImpl(context, [instance = std::move(obj)] { return instance; });
     }
 
-    CONTEXT addInstance(CONTEXT context, T& obj) {
+    template <typename Derived, std::enable_if_t<std::is_convertible_v<Derived*, T*>, int> = 0>
+    ContextPtr addInstance(Context& context, const std::shared_ptr<Derived>& obj) {
+        if (!obj) {
+            throw std::invalid_argument("ServiceProvider instance must not be null");
+        }
+        std::shared_ptr<T> instance = obj;
+        return addInstanceImpl(context, [instance = std::move(instance)] { return instance; });
+    }
+
+    ContextPtr addInstance(ContextPtr context, T& obj) {
         if (!context) {
             throw std::invalid_argument("ServiceProvider context must not be null");
         }
         return addInstance(*context, obj);
     }
 
-    CONTEXT addInstance(CONTEXT context, std::shared_ptr<T> obj) {
+    ContextPtr addInstance(ContextPtr context, std::shared_ptr<T> obj) {
         if (!context) {
             throw std::invalid_argument("ServiceProvider context must not be null");
         }
         return addInstance(*context, std::move(obj));
+    }
+
+    template <typename Derived, std::enable_if_t<std::is_convertible_v<Derived*, T*>, int> = 0>
+    ContextPtr addInstance(ContextPtr context, const std::shared_ptr<Derived>& obj) {
+        if (!context) {
+            throw std::invalid_argument("ServiceProvider context must not be null");
+        }
+        return addInstance(*context, obj);
     }
 
     template <typename Method, typename... Args>
@@ -350,7 +372,7 @@ public:
     }
 
     template <typename Method, typename... Args>
-    void callMethod(CONTEXT context, Method method, Args... args) const {
+    void callMethod(ContextPtr context, Method method, Args... args) const {
         if (!context) {
             throw std::invalid_argument("ServiceProvider context must not be null");
         }
@@ -376,7 +398,7 @@ public:
 
     template <typename Method, typename... Args>
     std::vector<std::invoke_result_t<Method, T&, Args...>> callMethodGet(
-        CONTEXT context,
+        ContextPtr context,
         Method method,
         Args... args) const {
         if (!context) {
@@ -428,18 +450,11 @@ public:
 
 #ifdef SERVICE_PROVIDER_SINGLE_THREAD
     void collectGarbage() {
-        decltype(objs) removedInstances;
         decltype(contextMap) removedContexts;
         {
             std::lock_guard<detail::ProviderMutex> lock(contextsMutex);
             for (auto it = contextMap.begin(); it != contextMap.end();) {
-                if (it->second.use_count() == 1) {
-                    const auto instancesIt = objs.find(it->first);
-                    if (instancesIt != objs.end()) {
-                        auto instances = std::move(instancesIt->second);
-                        objs.erase(instancesIt);
-                        removedInstances.emplace(it->first, std::move(instances));
-                    }
+                if (it->second.use_count() == 1 && objs.find(it->first) == objs.end()) {
                     removedContexts.emplace(it->first, std::move(it->second));
                     it = contextMap.erase(it);
                 } else {
@@ -459,5 +474,9 @@ public:
     public: \
         std::shared_ptr<InterfaceType> getNewInstance(std::type_info& requester) override; \
     }
+
+#ifdef SERVICE_PROVIDER_ENABLE_DI
+#include "serviceProvDI.h"
+#endif
 
 #endif

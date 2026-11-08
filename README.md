@@ -6,6 +6,8 @@ Biblioteca C++ header-only para organizar instâncias de serviços por contexto.
 
 `ServiceProvider<T>` combina um registro de serviços, uma fábrica selecionada pelo tipo solicitante e despacho multicast. O código cliente depende da interface `T`; uma chamada pode alcançar todas as instâncias daquele contexto, em ordem de registro. Contextos diferentes mantêm grupos independentes, e `callMethodGet` reúne os resultados de cada instância.
 
+Um contexto é a chave nomeada do grupo que recebe as chamadas; não é uma instância de serviço nem um escopo de injeção de dependência. O `service::ContextPtr` identifica o grupo. O provider mantém grupos com serviços até `erase` ou `clear`; descartar o handle não apaga as instâncias.
+
 O padrão está mais próximo de um **service registry com fábrica tipada e dispatcher multicast** do que de um container DI tradicional: ele não monta um grafo de dependências para injetar um objeto por consumidor. Em vez disso, associa instâncias a contextos, pode selecionar implementações pelo tipo solicitante e encaminha chamadas ao grupo.
 
 ## Como funciona
@@ -65,6 +67,10 @@ g++ -std=c++17 -pthread -Wall -Wextra -Wpedantic -I. tests/serviceProv_test.cpp 
 /tmp/serviceProv_test
 g++ -std=c++17 -Wall -Wextra -Wpedantic -I. tests/serviceProv_single_thread_test.cpp -o /tmp/serviceProv_single_thread_test
 /tmp/serviceProv_single_thread_test
+g++ -std=c++17 -pthread -Wall -Wextra -Wpedantic -I. tests/serviceProv_di_test.cpp -o /tmp/serviceProv_di_test
+/tmp/serviceProv_di_test
+g++ -std=c++17 -Wall -Wextra -Wpedantic -I. tests/serviceProv_di_single_thread_test.cpp -o /tmp/serviceProv_di_single_thread_test
+/tmp/serviceProv_di_single_thread_test
 ```
 
 O segundo teste usa `SERVICE_PROVIDER_SINGLE_THREAD` e compila sem `-pthread`. Essa macro precisa ser definida igualmente em todas as unidades de tradução; não use esse modo se o provider puder ser acessado concorrentemente.
@@ -76,6 +82,8 @@ O exemplo separa responsabilidades em `examples/service_provider/`: `iuser.h` de
 Alterações nos corpos `.cpp` exigem recompilar essa unidade e relinkar a aplicação. Alterações em headers compartilhados, incluindo `serviceProv.h`, exigem recompilar as unidades que os incluem. Consulte o [guia da API](docs/API.md) para detalhes de overloads, ownership, concorrência e benchmarks.
 
 ## Estado da implementação
+
+**DI experimental (opcional):** defina `SERVICE_PROVIDER_ENABLE_DI` antes de incluir `serviceProv.h` para habilitar `service::Container`, que resolve dependências por interface com auto-wiring pelo construtor (`bind<I, Impl>()`, `make<Consumer>()`, `bindFactory`, `bindInstance`; lifetimes `Singleton` e `Transient`; ciclos lançam `std::logic_error`). Sem a macro, nada é compilado, e ela não altera `ServiceProvider`. Exemplo: [`examples/di_example.cpp`](examples/di_example.cpp). Teste: [`tests/serviceProv_di_test.cpp`](tests/serviceProv_di_test.cpp).
 
 O projeto e a API ainda estão em desenvolvimento. Consulte o [roadmap](ROADMAP.md) para acompanhar as melhorias.
 

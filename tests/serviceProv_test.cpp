@@ -53,6 +53,12 @@ public:
     }
 };
 
+class ThrowingService final : public IService {
+public:
+    void add(int) override { throw std::runtime_error("callback failed"); }
+    int value() const override { return 0; }
+};
+
 struct Caller {};
 
 class TestProvider final : public service::ServiceProvider<IService> {
@@ -76,12 +82,16 @@ int main() {
 
     provider.addInstance<Caller>(context);
     provider.addInstance(context, std::static_pointer_cast<IService>(std::make_shared<ServiceImpl>(20)));
+    auto derivedInstance = std::make_shared<ServiceImpl>(30);
+    provider.addInstance(namedContext, derivedInstance);
+    auto derivedInstanceWithHandle = std::make_shared<ServiceImpl>(40);
+    provider.addInstance(context, derivedInstanceWithHandle);
     const auto values = provider.callMethodGet(context, &IService::value);
-    assert((values == std::vector<int>{10, 10, 20}));
+    assert((values == std::vector<int>{10, 10, 20, 30, 40}));
 
     provider.callMethod(context, &IService::add, 5);
     const auto updatedValues = provider.callMethodGet(namedContext, &IService::value);
-    assert((updatedValues == std::vector<int>{15, 15, 25}));
+    assert((updatedValues == std::vector<int>{15, 15, 25, 35, 45}));
 
     provider.erase("shared");
     bool missingContextReported = false;
@@ -94,7 +104,7 @@ int main() {
 
     bool nullContextReported = false;
     try {
-        provider.callMethod(CONTEXT{}, &IService::add, 1);
+        provider.callMethod(service::ContextPtr{}, &IService::add, 1);
     } catch (const std::invalid_argument&) {
         nullContextReported = true;
     }
@@ -109,6 +119,13 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     assert(expiredContext.expired());
+
+    service::Context retainedServiceContext("retained-service");
+    auto retainedService = std::make_shared<ServiceImpl>(7);
+    provider.addInstance(retainedServiceContext, retainedService);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    assert((provider.callMethodGet(retainedServiceContext, &IService::value) == std::vector<int>{7}));
+    provider.erase(retainedServiceContext);
 
     service::Context reentrantContext("reentrant");
     ServiceImpl reentrantService(0, [&provider] { provider.erase("reentrant"); });
@@ -192,7 +209,7 @@ int main() {
     assert(weakInFlightInstance.expired());
 
     TestProvider batchCollector(1);
-    std::vector<CONTEXT> contextHandles;
+    std::vector<service::ContextPtr> contextHandles;
     std::vector<std::weak_ptr<service::Context>> weakContexts;
     for (int index = 0; index < 300; ++index) {
         auto contextHandle = batchCollector.registerContext("batch-" + std::to_string(index));
@@ -214,6 +231,37 @@ int main() {
         weakContexts.begin(),
         weakContexts.end(),
         [](const auto& contextHandle) { return contextHandle.expired(); }));
+
+    // An exception stops the broadcast: earlier instances ran, later ones were skipped.
+    service::Context throwingContext("throwing");
+    const auto beforeThrow = std::make_shared<ServiceImpl>(0);
+    const auto afterThrow = std::make_shared<ServiceImpl>(0);
+    provider.addInstance(throwingContext, beforeThrow);
+    provider.addInstance(throwingContext, std::make_shared<ThrowingService>());
+    provider.addInstance(throwingContext, afterThrow);
+    bool callbackThrew = false;
+    try {
+        provider.callMethod(throwingContext, &IService::add, 1);
+    } catch (const std::runtime_error&) {
+        callbackThrew = true;
+    }
+    assert(callbackThrew);
+    assert(beforeThrow->value() == 1);
+    assert(afterThrow->value() == 0);
+    // The provider stays usable after the exception.
+    assert(provider.callMethodGet(throwingContext, &IService::value).size() == 3);
+    provider.erase(throwingContext);
+
+    // The destructor wakes the collector instead of waiting out a long interval.
+    const auto destroyStart = std::chrono::steady_clock::now();
+    { TestProvider slowCollector(60000); }
+    assert(std::chrono::steady_clock::now() - destroyStart < std::chrono::seconds(2));
+
+    // Creating and destroying providers back to back must not race with collector start-up.
+    for (int round = 0; round < 200; ++round) {
+        TestProvider shortLived(1);
+        shortLived.registerContext("round-" + std::to_string(round));
+    }
 
     service::ServiceProvider<IService> atomicProvider;
     service::Context atomicContext("atomic-service");

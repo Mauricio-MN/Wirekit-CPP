@@ -6,7 +6,7 @@
 
 void printIds(
     example::UserService& userService,
-    const CONTEXT& context,
+    const service::ContextPtr& context,
     const char* label) {
     const auto ids = userService.callMethodGet(context, &example::IUser::getId);
     std::cout << label;
@@ -70,7 +70,7 @@ int main() {
     // The caller-object overload is also available. It reads the caller's type
     // while addInstance runs; it does not retain a reference to that object.
     service::Context callerBasedRequest("caller-based-request");
-    CONTEXT callerBasedContext;
+    service::ContextPtr callerBasedContext;
     {
         StaffRequest shortLivedCaller;
         callerBasedContext = userService.addInstance(callerBasedRequest, shortLivedCaller);

@@ -103,3 +103,11 @@ Objetivo: permitir que aplicacoes sem acesso concorrente removam o custo de mute
 - As execucoes locais variaram bastante e nao estabeleceram um ganho estavel de latencia por despacho. O beneficio confirmado e estrutural: sem thread de coleta e sem mutexes reais; novas comparacoes precisam de ambiente controlado.
 - O acesso interno ao identificador do contexto agora evita criar uma copia da string nos caminhos de registro, despacho e remocao; as assinaturas publicas existentes foram mantidas.
 - O modo multithread continua sendo o padrao, com coletor automatico e mutexes reais.
+
+## Correcoes identificadas na revisao
+
+- [x] Remover a macro global `CONTEXT` e substitui-la pelo alias `service::ContextPtr`.
+- [x] Iniciar o thread coletor somente depois da inicializacao de todos os membros.
+- [x] Registrar corretamente `shared_ptr` de tipos derivados sem selecionar a fabrica por engano.
+- [x] Sincronizar a mudanca do predicado de parada com o mutex usado pela condition variable.
+- [x] Tornar previsivel o lifetime de grupos com servicos: eles permanecem no provider ate `erase`/`clear`; o coletor automatico remove apenas contextos vazios sem handles externos.
