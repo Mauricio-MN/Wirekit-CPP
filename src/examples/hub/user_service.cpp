@@ -8,7 +8,7 @@
 
 namespace example {
 
-std::shared_ptr<IUser> UserService::getNewInstance(std::type_info& requester) {
+std::shared_ptr<IUser> UserService::createFor(std::type_info& requester) {
     if (requester == typeid(StaffRequest)) {
         return std::make_shared<UserStaff>();
     }

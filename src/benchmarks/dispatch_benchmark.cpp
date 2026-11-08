@@ -1,4 +1,4 @@
-#include "serviceProv.h"
+#include "wirekit.h"
 
 #include <chrono>
 #include <cstddef>
@@ -23,27 +23,27 @@ int main() {
     const std::vector<std::size_t> instanceCounts{1, 8, 64, 256};
 
     for (const std::size_t instanceCount : instanceCounts) {
-        service::ServiceProvider<BenchService> provider;
-        service::Context namedContext("benchmark-context-with-a-long-name");
-        const auto context = provider.registerContext(namedContext);
+        wirekit::Hub<BenchService> hub;
+        wirekit::Channel namedChannel("benchmark-channel-with-a-long-name");
+        const auto channel = hub.registerChannel(namedChannel);
         std::vector<std::shared_ptr<BenchService>> directInstances;
         directInstances.reserve(instanceCount);
 
         for (std::size_t index = 0; index < instanceCount; ++index) {
             BenchService instance;
-            provider.addInstance(namedContext, instance);
+            hub.addInstance(namedChannel, instance);
             directInstances.push_back(std::make_shared<BenchService>());
         }
 
-        const auto providerStart = std::chrono::steady_clock::now();
+        const auto hubStart = std::chrono::steady_clock::now();
         for (std::size_t iteration = 0; iteration < iterations; ++iteration) {
-            provider.callMethod(context, &BenchService::hit);
+            hub.callMethod(channel, &BenchService::hit);
         }
-        const auto providerEnd = std::chrono::steady_clock::now();
-        const auto providerCounts = provider.callMethodGet(context, &BenchService::count);
-        std::size_t providerChecksum = 0;
-        for (const std::size_t count : providerCounts) {
-            providerChecksum += count;
+        const auto hubEnd = std::chrono::steady_clock::now();
+        const auto hubCounts = hub.callMethodGet(channel, &BenchService::count);
+        std::size_t hubChecksum = 0;
+        for (const std::size_t count : hubCounts) {
+            hubChecksum += count;
         }
 
         const auto directStart = std::chrono::steady_clock::now();
@@ -58,19 +58,19 @@ int main() {
             directChecksum += instance->count();
         }
 
-        const auto providerNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                    providerEnd - providerStart)
+        const auto hubNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    hubEnd - hubStart)
                                     .count();
         const auto directNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                   directEnd - directStart)
                                   .count();
         std::cout << "instances=" << instanceCount
-                  << " provider_ns_per_dispatch="
-                  << static_cast<double>(providerNs) / iterations
+                  << " hub_ns_per_dispatch="
+                  << static_cast<double>(hubNs) / iterations
                   << " direct_ns_per_dispatch="
                   << static_cast<double>(directNs) / iterations
-                  << " provider_to_direct="
-                  << static_cast<double>(providerNs) / directNs
-                  << " checksum=" << providerChecksum << ':' << directChecksum << '\n';
+                  << " hub_to_direct="
+                  << static_cast<double>(hubNs) / directNs
+                  << " checksum=" << hubChecksum << ':' << directChecksum << '\n';
     }
 }

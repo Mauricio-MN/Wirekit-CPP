@@ -1,13 +1,13 @@
 #ifndef EXAMPLE_USER_SERVICE_H
 #define EXAMPLE_USER_SERVICE_H
 
-#include "../../serviceProv.h"
+#include "wirekit.h"
 #include "iuser.h"
 
 namespace example {
 
 // The factory is the only layer that needs to know concrete service classes.
-SERVICE_PROVIDER(UserService, IUser);
+WIREKIT_DECLARE_FACTORY(UserService, IUser);
 
 } // namespace example
 

@@ -1,4 +1,4 @@
-#include "../../serviceProv.h"
+#include "wirekit.h"
 
 #include <iostream>
 #include <memory>
@@ -21,25 +21,25 @@ public:
 };
 
 int main() {
-    service::ServiceProvider<Counter> provider;
-    service::Context context("registration-modes");
+    wirekit::Hub<Counter> hub;
+    wirekit::Channel channel("registration-modes");
 
-    // This overload copies the concrete object into the provider.
+    // This overload copies the concrete object into the hub.
     Counter prototype(3);
-    provider.addInstance(context, prototype);
+    hub.addInstance(channel, prototype);
 
     // This overload shares ownership with the caller; no raw pointer is used.
     auto sharedCounter = std::make_shared<Counter>(10);
-    provider.addInstance(context, sharedCounter);
+    hub.addInstance(channel, sharedCounter);
 
-    provider.callMethod(context, &Counter::increment, 1);
-    const std::vector<int> values = provider.callMethodGet(context, &Counter::getValue);
+    hub.callMethod(channel, &Counter::increment, 1);
+    const std::vector<int> values = hub.callMethodGet(channel, &Counter::getValue);
 
-    std::cout << "Provider copy: " << values.at(0) << '\n';
+    std::cout << "Hub copy: " << values.at(0) << '\n';
     std::cout << "Original object: " << prototype.getValue() << '\n';
     std::cout << "Shared object: " << sharedCounter->getValue() << '\n';
 
-    // erase removes the provider's ownership; sharedCounter remains alive here
+    // erase removes the hub's ownership; sharedCounter remains alive here
     // because this scope still owns its shared_ptr.
-    provider.erase(context);
+    hub.erase(channel);
 }

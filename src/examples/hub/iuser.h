@@ -3,7 +3,7 @@
 
 namespace example {
 
-// The client and provider share this contract, not the concrete implementations.
+// The client and hub share this contract, not the concrete implementations.
 class IUser {
 public:
     virtual ~IUser() = default;

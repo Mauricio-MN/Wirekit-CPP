@@ -1,19 +1,24 @@
-#ifndef SERVICE_PROV_DI_H
-#define SERVICE_PROV_DI_H
-
-#ifndef SERVICE_PROV_H
-#error "Define SERVICE_PROVIDER_ENABLE_DI and include serviceProv.h instead of this header"
-#endif
+#ifndef WIREKIT_CONTAINER_H
+#define WIREKIT_CONTAINER_H
 
 #include <functional>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
 #include <typeindex>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
-namespace service {
+#include "detail.h"
+
+namespace wirekit {
 
 namespace detail {
-#ifdef SERVICE_PROVIDER_SINGLE_THREAD
-using CreationMutex = ProviderMutex;
+#ifdef WIREKIT_SINGLE_THREAD
+using CreationMutex = SyncMutex;
 #else
 using CreationMutex = std::recursive_mutex;
 #endif
@@ -102,20 +107,20 @@ private:
     };
 
     std::unordered_map<std::type_index, Binding> bindings;
-    mutable detail::ProviderMutex mutex;
+    mutable detail::SyncMutex mutex;
     // Serializes singleton creation; never held while `mutex` is taken by user code.
     mutable detail::CreationMutex creationMutex;
 
     void store(std::type_index key, Binding binding) {
         Binding replaced;  // Destroyed after the lock is released.
-        std::lock_guard<detail::ProviderMutex> lock(mutex);
+        std::lock_guard<detail::SyncMutex> lock(mutex);
         auto& slot = bindings[key];
         replaced = std::move(slot);
         slot = std::move(binding);
     }
 
     Lookup lookup(std::type_index key) const {
-        std::lock_guard<detail::ProviderMutex> lock(mutex);
+        std::lock_guard<detail::SyncMutex> lock(mutex);
         const auto it = bindings.find(key);
         if (it == bindings.end()) {
             throw std::out_of_range(std::string("No binding for ") + key.name());
@@ -178,7 +183,7 @@ public:
 
     // Builds an unregistered consumer with its constructor dependencies injected.
     template <class Consumer>
-    std::shared_ptr<Consumer> make() {
+    std::shared_ptr<Consumer> create() {
         return autoWire<Consumer, maxAutoWiredDependencies>(*this);
     }
 
@@ -213,7 +218,7 @@ public:
         }
         std::shared_ptr<void> instance = build(key, found.create);
         {
-            std::lock_guard<detail::ProviderMutex> lock(mutex);
+            std::lock_guard<detail::SyncMutex> lock(mutex);
             const auto it = bindings.find(key);
             if (it != bindings.end() && !it->second.singleton) {
                 it->second.singleton = instance;
@@ -225,12 +230,12 @@ public:
     void clear() {
         decltype(bindings) removed;
         {
-            std::lock_guard<detail::ProviderMutex> lock(mutex);
+            std::lock_guard<detail::SyncMutex> lock(mutex);
             removed.swap(bindings);
         }
     }
 };
 
-} // namespace service
+} // namespace wirekit
 
 #endif

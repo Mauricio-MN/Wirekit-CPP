@@ -1,5 +1,5 @@
-#define SERVICE_PROVIDER_ENABLE_DI
-#include "../serviceProv.h"
+#define WIREKIT_ENABLE_DI
+#include "wirekit.h"
 
 #include <atomic>
 #include <cassert>
@@ -51,7 +51,7 @@ struct SlowClock final : IClock {
 std::atomic<int> probesDestroyed{0};
 
 struct Probe {
-    explicit Probe(service::Container& c) : container(c) {}
+    explicit Probe(wirekit::Container& c) : container(c) {}
     // Resolving here would deadlock if destruction ran while the container's lock is held.
     ~Probe() {
         if (armed) {
@@ -59,14 +59,14 @@ struct Probe {
             ++probesDestroyed;
         }
     }
-    service::Container& container;
+    wirekit::Container& container;
     bool armed = false;
 };
 
 int main() {
-    service::Container container;
+    wirekit::Container container;
     container.bind<IClock, FixedClock>();
-    container.bind<ILogger, Logger>(service::Lifetime::Transient);
+    container.bind<ILogger, Logger>(wirekit::Lifetime::Transient);
 
     auto clockA = container.resolve<IClock>();
     assert(clockA == container.resolve<IClock>());
@@ -78,12 +78,12 @@ int main() {
     assert(static_cast<Logger&>(*loggerA).clock == clockA);
 
     // Unregistered consumer, wired through its constructor.
-    auto consumer = container.make<Service>();
+    auto consumer = container.create<Service>();
     assert(consumer->clock == clockA);
     assert(consumer->logger != loggerA);
 
     // Explicit dependency list still works.
-    service::Container explicitContainer;
+    wirekit::Container explicitContainer;
     explicitContainer.bind<IClock, FixedClock>();
     explicitContainer.bind<ILogger, Logger, IClock>();
     assert(static_cast<Logger&>(*explicitContainer.resolve<ILogger>()).clock == explicitContainer.resolve<IClock>());
@@ -96,8 +96,8 @@ int main() {
     }
     assert(missing);
 
-    container.bind<CycleA, CycleA>(service::Lifetime::Transient);
-    container.bind<CycleB, CycleB>(service::Lifetime::Transient);
+    container.bind<CycleA, CycleA>(wirekit::Lifetime::Transient);
+    container.bind<CycleB, CycleB>(wirekit::Lifetime::Transient);
     bool cycle = false;
     try {
         container.resolve<CycleA>();
@@ -112,7 +112,7 @@ int main() {
     container.bindInstance<IClock>(fixed);
     assert(container.resolve<IClock>() == fixed);
 
-    service::Container concurrent;
+    wirekit::Container concurrent;
     concurrent.bind<IClock, FixedClock>();
     std::vector<std::shared_ptr<IClock>> results(4);
     std::vector<std::thread> threads;
@@ -124,7 +124,7 @@ int main() {
 
     // A singleton is built exactly once even when many threads ask at the same moment,
     // including one whose factory resolves another singleton (recursive creation).
-    service::Container racing;
+    wirekit::Container racing;
     racing.bind<IClock, SlowClock>();
     racing.bind<ILogger, Logger>();
     std::vector<std::shared_ptr<ILogger>> loggers(8);
@@ -137,7 +137,7 @@ int main() {
     for (const auto& l : loggers) assert(l == loggers[0]);
 
     // Replacing a binding destroys the old instance after the lock is released.
-    service::Container replacing;
+    wirekit::Container replacing;
     replacing.bind<IClock, FixedClock>();
     auto armedProbe = std::make_shared<Probe>(replacing);
     armedProbe->armed = true;
@@ -147,7 +147,7 @@ int main() {
     assert(probesDestroyed.load() == 1);
 
     // Error paths leave the container usable.
-    service::Container errors;
+    wirekit::Container errors;
     bool emptyFactoryRejected = false;
     try {
         errors.bindFactory<IClock>(nullptr);
@@ -165,8 +165,8 @@ int main() {
     assert(nullInstanceRejected);
 
     errors.bindFactory<IClock>(
-        [](service::Container&) { return std::shared_ptr<IClock>(); },
-        service::Lifetime::Transient);
+        [](wirekit::Container&) { return std::shared_ptr<IClock>(); },
+        wirekit::Lifetime::Transient);
     bool nullProductRejected = false;
     try {
         errors.resolve<IClock>();
@@ -177,8 +177,8 @@ int main() {
 
     bool missingDependency = false;
     try {
-        service::Container empty;
-        empty.make<Service>();  // neither dependency is bound
+        wirekit::Container empty;
+        empty.create<Service>();  // neither dependency is bound
     } catch (const std::out_of_range&) {
         missingDependency = true;
     }
@@ -196,7 +196,7 @@ int main() {
     assert(clearedBinding);
 
     // Rebinding replaces the old singleton.
-    service::Container rebinding;
+    wirekit::Container rebinding;
     rebinding.bind<IClock, FixedClock>();
     const auto oldClock = rebinding.resolve<IClock>();
     rebinding.bind<IClock, SlowClock>();
@@ -204,15 +204,15 @@ int main() {
     assert(rebinding.resolve<IClock>()->now() == 1);
 
     // A singleton keeps its dependency; a transient dependency is captured once.
-    service::Container lifetimes;
-    lifetimes.bind<IClock, FixedClock>(service::Lifetime::Transient);
+    wirekit::Container lifetimes;
+    lifetimes.bind<IClock, FixedClock>(wirekit::Lifetime::Transient);
     lifetimes.bind<ILogger, Logger>();
     const auto singletonLogger = lifetimes.resolve<ILogger>();
     assert(singletonLogger == lifetimes.resolve<ILogger>());
     assert(static_cast<Logger&>(*singletonLogger).clock != lifetimes.resolve<IClock>());
 
-    // Coexists with the provider under the same macro.
-    service::ServiceProvider<IClock> provider;
-    provider.addInstance(*provider.registerContext("clocks"), fixed);
-    assert((provider.callMethodGet(provider.registerContext("clocks"), &IClock::now) == std::vector<int>{42}));
+    // Coexists with the hub under the same macro.
+    wirekit::Hub<IClock> hub;
+    hub.addInstance(*hub.registerChannel("clocks"), fixed);
+    assert((hub.callMethodGet(hub.registerChannel("clocks"), &IClock::now) == std::vector<int>{42}));
 }

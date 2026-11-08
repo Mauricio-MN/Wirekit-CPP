@@ -1,4 +1,4 @@
-#include "../serviceProv.h"
+#include "wirekit.h"
 
 #include <algorithm>
 #include <chrono>
@@ -9,20 +9,20 @@
 #include <vector>
 
 int main(int argc, char* argv[]) {
-    constexpr std::size_t contextCount = 50000;
+    constexpr std::size_t channelCount = 50000;
     constexpr std::size_t workerCount = 4;
     constexpr std::size_t samplesPerWorker = 10000;
     const int collectionIntervalMs = argc > 1 ? std::stoi(argv[1]) : 1;
 
-    service::ServiceProvider<int> provider(collectionIntervalMs);
-    std::vector<std::string> contextNames;
-    std::vector<service::ContextPtr> contextHandles;
-    contextNames.reserve(contextCount);
-    contextHandles.reserve(contextCount);
+    wirekit::Hub<int> hub(collectionIntervalMs);
+    std::vector<std::string> channelNames;
+    std::vector<wirekit::ChannelPtr> channelHandles;
+    channelNames.reserve(channelCount);
+    channelHandles.reserve(channelCount);
 
-    for (std::size_t index = 0; index < contextCount; ++index) {
-        contextNames.push_back("context-" + std::to_string(index));
-        contextHandles.push_back(provider.registerContext(contextNames.back()));
+    for (std::size_t index = 0; index < channelCount; ++index) {
+        channelNames.push_back("channel-" + std::to_string(index));
+        channelHandles.push_back(hub.registerChannel(channelNames.back()));
     }
 
     std::vector<std::vector<long long>> samples(workerCount);
@@ -34,11 +34,11 @@ int main(int argc, char* argv[]) {
             auto& workerSamples = samples[worker];
             workerSamples.reserve(samplesPerWorker);
             for (std::size_t sample = 0; sample < samplesPerWorker; ++sample) {
-                const std::size_t index = (sample * 37 + worker * 101) % contextCount;
+                const std::size_t index = (sample * 37 + worker * 101) % channelCount;
                 const auto started = std::chrono::steady_clock::now();
-                const auto context = provider.findContext(contextNames[index]);
+                const auto channel = hub.findChannel(channelNames[index]);
                 const auto finished = std::chrono::steady_clock::now();
-                if (!context) {
+                if (!channel) {
                     std::terminate();
                 }
                 workerSamples.push_back(
@@ -63,10 +63,10 @@ int main(int argc, char* argv[]) {
         return allSamples[index];
     };
 
-    std::cout << "contexts=" << contextCount
+    std::cout << "channels=" << channelCount
               << " threads=" << workerCount
               << " collection_interval_ms=" << collectionIntervalMs
-              << " findContext_ns_p50=" << percentile(0.50)
+              << " findChannel_ns_p50=" << percentile(0.50)
               << " p95=" << percentile(0.95)
               << " p99=" << percentile(0.99)
               << " max=" << allSamples.back() << '\n';

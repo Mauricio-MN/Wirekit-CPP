@@ -1,6 +1,6 @@
-#define SERVICE_PROVIDER_SINGLE_THREAD
-#define SERVICE_PROVIDER_ENABLE_DI
-#include "../serviceProv.h"
+#define WIREKIT_SINGLE_THREAD
+#define WIREKIT_ENABLE_DI
+#include "wirekit.h"
 
 #include <cassert>
 #include <memory>
@@ -26,9 +26,9 @@ struct CycleA { explicit CycleA(std::shared_ptr<CycleB>) {} };
 struct CycleB { explicit CycleB(std::shared_ptr<CycleA>) {} };
 
 int main() {
-    service::Container container;
+    wirekit::Container container;
     container.bind<IClock, FixedClock>();
-    container.bind<Logger, Logger>(service::Lifetime::Transient);
+    container.bind<Logger, Logger>(wirekit::Lifetime::Transient);
 
     const auto clock = container.resolve<IClock>();
     assert(clock == container.resolve<IClock>());
@@ -37,10 +37,10 @@ int main() {
     const auto first = container.resolve<Logger>();
     assert(first != container.resolve<Logger>());
     assert(first->clock == clock);
-    assert(container.make<Logger>()->clock == clock);
+    assert(container.create<Logger>()->clock == clock);
 
-    container.bind<CycleA, CycleA>(service::Lifetime::Transient);
-    container.bind<CycleB, CycleB>(service::Lifetime::Transient);
+    container.bind<CycleA, CycleA>(wirekit::Lifetime::Transient);
+    container.bind<CycleB, CycleB>(wirekit::Lifetime::Transient);
     bool cycle = false;
     try {
         container.resolve<CycleA>();
@@ -50,11 +50,11 @@ int main() {
     assert(cycle);
     assert(container.resolve<IClock>() == clock);
 
-    // Container and provider share the single-thread configuration.
-    service::ServiceProvider<IClock> provider;
-    service::Context context("clocks");
-    provider.addInstance(context, clock);
-    assert(provider.callMethodGet(context, &IClock::now).size() == 1);
+    // Container and hub share the single-thread configuration.
+    wirekit::Hub<IClock> hub;
+    wirekit::Channel channel("clocks");
+    hub.addInstance(channel, clock);
+    assert(hub.callMethodGet(channel, &IClock::now).size() == 1);
     container.clear();
-    provider.clear();
+    hub.clear();
 }
