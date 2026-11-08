@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sanitizers:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan and UBSan
+            asan: ON
+            tsan: OFF
+          - name: TSan
+            asan: OFF
+            tsan: ON
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DWIREKIT_BUILD_BENCHMARKS=OFF
+          -DWIREKIT_SANITIZE=${{ matrix.asan }}
+          -DWIREKIT_THREAD_SANITIZE=${{ matrix.tsan }}
+          -DCMAKE_BUILD_TYPE=Debug
+      - name: Build and test
+        run: cmake --build build --parallel 2 && ctest --test-dir build --output-on-failure
+
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and install
+        run: |
+          cmake -S . -B build -DWIREKIT_BUILD_TESTS=OFF -DWIREKIT_BUILD_EXAMPLES=OFF -DWIREKIT_BUILD_BENCHMARKS=OFF
+          cmake --build build
+          cmake --install build --prefix "$RUNNER_TEMP/wirekit-install"
+      - name: Build installed-package consumer
+        run: |
+          cmake -S tests/package-consumer -B consumer-build -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/wirekit-install"
+          cmake --build consumer-build --parallel 2
+          ctest --test-dir consumer-build --output-on-failure

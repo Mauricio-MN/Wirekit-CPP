@@ -80,7 +80,7 @@ int main() {
 
     // Remove all groups explicitly. The hub itself remains alive until
     // main exits; another UserService object would own a separate registry.
-    userService.erase(*channel);
-    userService.erase(*backgroundChannel);
-    userService.erase(*callerBasedChannel);
+    userService.erase(channel);
+    userService.erase(backgroundChannel);
+    userService.erase(callerBasedChannel);
 }

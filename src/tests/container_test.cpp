@@ -213,6 +213,6 @@ int main() {
 
     // Coexists with the hub under the same macro.
     wirekit::Hub<IClock> hub;
-    hub.addInstance(*hub.registerChannel("clocks"), fixed);
+    hub.addInstance(hub.registerChannel("clocks"), fixed);
     assert((hub.callMethodGet(hub.registerChannel("clocks"), &IClock::now) == std::vector<int>{42}));
 }

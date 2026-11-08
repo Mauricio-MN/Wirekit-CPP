@@ -26,7 +26,7 @@ int main() {
     hub.callMethod(channel, &Counter::add, 3);
     assert((hub.callMethodGet(channel, &Counter::get) == std::vector<int>{8}));
 
-    std::weak_ptr<wirekit::Channel> expiredChannel;
+    std::weak_ptr<wirekit::ChannelHandle> expiredChannel;
     {
         auto temporaryChannel = hub.registerChannel("manual-garbage-collection");
         expiredChannel = temporaryChannel;

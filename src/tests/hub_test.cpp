@@ -2,7 +2,6 @@
 
 #include <atomic>
 #include <cassert>
-#include <chrono>
 #include <future>
 #include <functional>
 #include <memory>
@@ -80,6 +79,30 @@ int main() {
     assert(hub.findChannel("shared") == channel);
     assert(!hub.findChannel("not-registered"));
 
+    wirekit::Hub<IService> otherHub;
+    bool foreignHandleRejected = false;
+    try {
+        otherHub.callMethod(channel, &IService::add, 1);
+    } catch (const std::invalid_argument&) {
+        foreignHandleRejected = true;
+    }
+    assert(foreignHandleRejected);
+    wirekit::Channel foreignSubscriptionChannel("foreign-subscription");
+    const auto foreignSubscription = otherHub.subscribe(
+        foreignSubscriptionChannel,
+        std::static_pointer_cast<IService>(std::make_shared<ServiceImpl>(0)));
+    bool foreignSubscriptionRejected = false;
+    try {
+        hub.unsubscribe(foreignSubscription);
+    } catch (const std::invalid_argument&) {
+        foreignSubscriptionRejected = true;
+    }
+    assert(foreignSubscriptionRejected);
+
+    wirekit::Channel emptyChannel("empty");
+    hub.callMethod(emptyChannel, &IService::add, 1);
+    assert(hub.callMethodGet(emptyChannel, &IService::value).empty());
+
     hub.addInstance<Caller>(channel);
     hub.addInstance(channel, std::static_pointer_cast<IService>(std::make_shared<ServiceImpl>(20)));
     auto derivedInstance = std::make_shared<ServiceImpl>(30);
@@ -93,14 +116,46 @@ int main() {
     const auto updatedValues = hub.callMethodGet(namedChannel, &IService::value);
     assert((updatedValues == std::vector<int>{15, 15, 25, 35, 45}));
 
+    wirekit::Channel unsubscribeChannel("unsubscribe");
+    const auto removedService = std::make_shared<ServiceImpl>(1);
+    const auto retainedForUnsubscribe = std::make_shared<ServiceImpl>(2);
+    hub.addInstance(unsubscribeChannel, removedService);
+    hub.addInstance(unsubscribeChannel, retainedForUnsubscribe);
+    assert(hub.removeInstance(unsubscribeChannel, removedService));
+    assert(!hub.removeInstance(unsubscribeChannel, removedService));
+    assert((hub.callMethodGet(unsubscribeChannel, &IService::value) == std::vector<int>{2}));
+    assert(hub.removeInstance(unsubscribeChannel, retainedForUnsubscribe));
+    assert(hub.callMethodGet(unsubscribeChannel, &IService::value).empty());
+
+    const auto factorySubscription = hub.subscribe<Caller>(unsubscribeChannel);
+    assert(factorySubscription);
+    assert((hub.callMethodGet(unsubscribeChannel, &IService::value) == std::vector<int>{10}));
+    assert(hub.unsubscribe(factorySubscription));
+    assert(!hub.unsubscribe(factorySubscription));
+    assert(hub.callMethodGet(unsubscribeChannel, &IService::value).empty());
+
     hub.erase("shared");
-    bool missingChannelReported = false;
+    hub.callMethod(namedChannel, &IService::add, 1);
+    hub.callMethod(channel, &IService::add, 1);
+    assert(hub.callMethodGet(channel, &IService::value).empty());
+    const auto replacementHandle = hub.registerChannel("shared");
+    assert(replacementHandle != channel);
+    const auto replacementService = std::make_shared<ServiceImpl>(3);
+    hub.addInstance(replacementHandle, replacementService);
+    hub.callMethod(channel, &IService::add, 1);
+    assert(replacementService->value() == 3);
+    hub.erase(channel);
+    assert(hub.findChannel("shared") == replacementHandle);
+    assert(!hub.removeInstance(channel, replacementService));
+    bool staleHandleRejected = false;
     try {
-        hub.callMethod(namedChannel, &IService::add, 1);
-    } catch (const std::out_of_range&) {
-        missingChannelReported = true;
+        hub.addInstance(channel, std::make_shared<ServiceImpl>(4));
+    } catch (const std::invalid_argument&) {
+        staleHandleRejected = true;
     }
-    assert(missingChannelReported);
+    assert(staleHandleRejected);
+    assert((hub.callMethodGet(replacementHandle, &IService::value) == std::vector<int>{3}));
+    hub.erase(replacementHandle);
 
     bool nullChannelReported = false;
     try {
@@ -110,20 +165,19 @@ int main() {
     }
     assert(nullChannelReported);
 
-    std::weak_ptr<wirekit::Channel> expiredChannel;
+    std::weak_ptr<wirekit::ChannelHandle> expiredChannel;
     {
         auto temporaryChannel = hub.registerChannel("temporary");
         expiredChannel = temporaryChannel;
     }
-    for (int attempt = 0; attempt < 100 && !expiredChannel.expired(); ++attempt) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    assert(!expiredChannel.expired());
+    hub.collectGarbage();
     assert(expiredChannel.expired());
 
     wirekit::Channel retainedServiceChannel("retained-service");
     auto retainedService = std::make_shared<ServiceImpl>(7);
     hub.addInstance(retainedServiceChannel, retainedService);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    hub.collectGarbage();
     assert((hub.callMethodGet(retainedServiceChannel, &IService::value) == std::vector<int>{7}));
     hub.erase(retainedServiceChannel);
 
@@ -193,40 +247,31 @@ int main() {
         releaseSignal.wait();
     });
     std::weak_ptr<IService> weakInFlightInstance = inFlightInstance;
-    const auto inFlightHandle = hub.addInstance(
+    const auto inFlightSubscription = hub.subscribe(
         inFlightChannel,
         std::static_pointer_cast<IService>(inFlightInstance));
     inFlightInstance.reset();
 
     std::thread inFlightCall([&] {
-        hub.callMethod(inFlightHandle, &IService::add, 1);
+        hub.callMethod(inFlightSubscription.channel, &IService::add, 1);
     });
     callbackEntered.get_future().wait();
-    hub.clear();
+    assert(hub.unsubscribe(inFlightSubscription));
     assert(!weakInFlightInstance.expired());
     releaseCallback.set_value();
     inFlightCall.join();
     assert(weakInFlightInstance.expired());
 
-    TestHub batchCollector(1);
+    TestHub batchCollector;
     std::vector<wirekit::ChannelPtr> channelHandles;
-    std::vector<std::weak_ptr<wirekit::Channel>> weakChannels;
+    std::vector<std::weak_ptr<wirekit::ChannelHandle>> weakChannels;
     for (int index = 0; index < 300; ++index) {
         auto channelHandle = batchCollector.registerChannel("batch-" + std::to_string(index));
         weakChannels.push_back(channelHandle);
         channelHandles.push_back(std::move(channelHandle));
     }
     channelHandles.clear();
-    for (int attempt = 0; attempt < 1000; ++attempt) {
-        const bool allExpired = std::all_of(
-            weakChannels.begin(),
-            weakChannels.end(),
-            [](const auto& channelHandle) { return channelHandle.expired(); });
-        if (allExpired) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    batchCollector.collectGarbage();
     assert(std::all_of(
         weakChannels.begin(),
         weakChannels.end(),
@@ -251,17 +296,6 @@ int main() {
     // The hub stays usable after the exception.
     assert(hub.callMethodGet(throwingChannel, &IService::value).size() == 3);
     hub.erase(throwingChannel);
-
-    // The destructor wakes the collector instead of waiting out a long interval.
-    const auto destroyStart = std::chrono::steady_clock::now();
-    { TestHub slowCollector(60000); }
-    assert(std::chrono::steady_clock::now() - destroyStart < std::chrono::seconds(2));
-
-    // Creating and destroying hubs back to back must not race with collector start-up.
-    for (int round = 0; round < 200; ++round) {
-        TestHub shortLived(1);
-        shortLived.registerChannel("round-" + std::to_string(round));
-    }
 
     wirekit::Hub<IService> atomicHub;
     wirekit::Channel atomicChannel("atomic-service");

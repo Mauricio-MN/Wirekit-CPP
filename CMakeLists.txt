@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 project(wirekit VERSION 0.1.0 LANGUAGES CXX)
 
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(WIREKIT_IS_TOP_LEVEL ON)
 else()
@@ -16,6 +19,11 @@ option(WIREKIT_BUILD_TESTS "Build the tests" ${WIREKIT_IS_TOP_LEVEL})
 option(WIREKIT_BUILD_BENCHMARKS "Build the benchmarks" ${WIREKIT_IS_TOP_LEVEL})
 option(WIREKIT_BUILD_EXAMPLES "Build the examples" ${WIREKIT_IS_TOP_LEVEL})
 option(WIREKIT_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(WIREKIT_THREAD_SANITIZE "Build with ThreadSanitizer" OFF)
+
+if(WIREKIT_SANITIZE AND WIREKIT_THREAD_SANITIZE)
+  message(FATAL_ERROR "WIREKIT_SANITIZE and WIREKIT_THREAD_SANITIZE cannot be enabled together")
+endif()
 
 if(WIREKIT_IS_TOP_LEVEL)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -26,31 +34,42 @@ find_package(Threads REQUIRED)
 # Header-only core with no threading decision attached.
 add_library(wirekit_headers INTERFACE)
 target_include_directories(wirekit_headers INTERFACE
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/include>)
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(wirekit_headers INTERFACE cxx_std_17)
+set_target_properties(wirekit_headers PROPERTIES EXPORT_NAME headers)
+add_library(wirekit::headers ALIAS wirekit_headers)
 
 # Default (multithreaded): the registry mutex and the collector thread need Threads.
 add_library(wirekit INTERFACE)
 add_library(wirekit::wirekit ALIAS wirekit)
 target_link_libraries(wirekit INTERFACE wirekit_headers Threads::Threads)
+set_target_properties(wirekit PROPERTIES EXPORT_NAME wirekit)
 
 # Single-threaded: every consumer gets the macro, so configurations cannot be mixed by accident.
 add_library(wirekit_single_thread INTERFACE)
 add_library(wirekit::single_thread ALIAS wirekit_single_thread)
 target_link_libraries(wirekit_single_thread INTERFACE wirekit_headers)
 target_compile_definitions(wirekit_single_thread INTERFACE WIREKIT_SINGLE_THREAD)
+set_target_properties(wirekit_single_thread PROPERTIES EXPORT_NAME single_thread)
 
 # Warnings and sanitizers for this repository's own targets only.
 add_library(wirekit_dev_options INTERFACE)
 if(MSVC)
   target_compile_options(wirekit_dev_options INTERFACE /W4)
-else()
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(wirekit_dev_options INTERFACE -Wall -Wextra -Wpedantic)
   if(WIREKIT_SANITIZE)
     target_compile_options(wirekit_dev_options INTERFACE
       -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(wirekit_dev_options INTERFACE -fsanitize=address,undefined)
+  elseif(WIREKIT_THREAD_SANITIZE)
+    target_compile_options(wirekit_dev_options INTERFACE
+      -g -O1 -fsanitize=thread -fno-omit-frame-pointer)
+    target_link_options(wirekit_dev_options INTERFACE -fsanitize=thread)
   endif()
+elseif(WIREKIT_SANITIZE OR WIREKIT_THREAD_SANITIZE)
+  message(FATAL_ERROR "Wirekit sanitizer options require GCC or Clang")
 endif()
 
 # The SINGLE_THREAD sources define WIREKIT_SINGLE_THREAD themselves and must not link Threads.
@@ -125,7 +144,27 @@ if(WIREKIT_BUILD_BENCHMARKS)
   add_custom_target(run_benchmarks
     COMMAND dispatch_benchmark
     COMMAND dispatch_benchmark_st
-    COMMAND collector_benchmark 1
-    COMMAND collector_benchmark 2147483647
+    COMMAND collector_benchmark
     USES_TERMINAL)
 endif()
+
+install(TARGETS wirekit_headers wirekit wirekit_single_thread
+  EXPORT wirekitTargets)
+install(DIRECTORY src/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(EXPORT wirekitTargets
+  FILE wirekitTargets.cmake
+  NAMESPACE wirekit::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/wirekit)
+
+configure_package_config_file(
+  cmake/wirekitConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/wirekitConfig.cmake
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/wirekit)
+write_basic_package_version_file(
+  ${CMAKE_CURRENT_BINARY_DIR}/wirekitConfigVersion.cmake
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion)
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/wirekitConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/wirekitConfigVersion.cmake
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/wirekit)

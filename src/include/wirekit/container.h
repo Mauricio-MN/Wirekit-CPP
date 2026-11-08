@@ -57,7 +57,7 @@ private:
         if constexpr (Count == 0) {
             static_assert(
                 std::is_constructible_v<Impl>,
-                "Impl needs a constructor whose parameters are all std::shared_ptr dependencies");
+                "Impl has no auto-wirable constructor with up to 8 std::shared_ptr dependencies; use an explicit factory or constructor");
             return std::make_shared<Impl>();
         } else if constexpr (constructibleWith<Impl>(std::make_index_sequence<Count>{})) {
             return makeWith<Impl>(container, std::make_index_sequence<Count>{});

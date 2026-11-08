@@ -15,7 +15,7 @@ Biblioteca C++ header-only (C++17) com duas peças que funcionam juntas ou separ
 
 **Registro e multicast (`Hub<T>`).** Combina um registro de serviços, uma fábrica selecionada pelo tipo solicitante e despacho multicast. O código cliente depende da interface `T`; uma chamada pode alcançar todas as instâncias daquele canal, em ordem de registro. Canais diferentes mantêm grupos independentes, e `callMethodGet` reúne os resultados de cada instância.
 
-Um canal é a chave nomeada do grupo que recebe as chamadas; não é uma instância de serviço nem um escopo de injeção de dependência. O `wirekit::ChannelPtr` identifica o grupo. O hub mantém grupos com serviços até `erase` ou `clear`; descartar o handle não apaga as instâncias.
+`wirekit::Channel` é um valor que contém apenas o nome do canal. `wirekit::ChannelPtr` é um handle opaco, ligado ao Hub que o criou; handles de outro Hub são rejeitados, e um handle continua inativo após `erase`, mesmo que o nome seja registrado novamente. O hub mantém grupos com serviços até `erase` ou `clear`; descartar o handle não apaga as instâncias.
 
 As duas peças se complementam: um `Hub<T>` pode ser uma dependência do container, como em [`src/examples/container/di_example.cpp`](src/examples/container/di_example.cpp), onde um serviço de pedidos recebe o banco e dispara email e SMS com uma única chamada. O container não substitui o hub: ele entrega **uma** dependência a quem pede, enquanto o hub envia **uma chamada** a todas as instâncias de um grupo.
 
@@ -23,7 +23,7 @@ As duas peças se complementam: um `Hub<T>` pode ser uma dependência do contain
 
 **Container.** `bind<I, Impl>()` registra a receita; o objeto só é criado quando alguém o pede e, sendo singleton, fica guardado. `create<T>()` cria um objeto novo, com as dependências injetadas, e não o guarda. A criação de um singleton acontece exatamente uma vez mesmo com várias threads pedindo ao mesmo tempo, e os objetos são destruídos fora dos mutexes. Parâmetros de construtor que não sejam `std::shared_ptr` não são injetados; use `bindFactory` nesses casos.
 
-**Hub.** No modo multithread padrão, as operações do registro são protegidas por mutex e cada despacho captura um snapshot imutável. Os callbacks executam fora do mutex global, e remover um canal não invalida uma chamada já iniciada. Chamadas concorrentes podem executar ao mesmo tempo, mas uma chamada individual percorre suas instâncias sequencialmente; o hub não cria uma thread por serviço.
+**Hub.** No modo multithread padrão, mutações do registro são protegidas por mutex e cada despacho captura um snapshot imutável. Despachar por `ChannelPtr` carrega o snapshot atomicamente, sem buscar o nome nem adquirir o mutex do registro; o overload por `Channel&` continua resolvendo por nome. Use `subscribe`/`unsubscribe` para inscrições criadas pela fábrica ou `removeInstance` com o `shared_ptr` registrado. Callbacks executam fora do mutex; remover uma inscrição ou canal não invalida uma chamada já iniciada. Chamadas concorrentes podem executar ao mesmo tempo, mas uma chamada individual percorre suas instâncias sequencialmente.
 
 A sincronização protege o registro, não o estado interno de `T`. Se duas threads chamarem simultaneamente a mesma instância, o próprio serviço precisa ser seguro para isso.
 
@@ -86,7 +86,7 @@ int main() {
 
 ## Início rápido
 
-Inclua `wirekit/wirekit.h` no projeto e adicione `src/include` ao include path (`-Isrc/include`). O requisito mínimo é C++17. Para habilitar o container DI, defina `WIREKIT_ENABLE_DI` antes do include (ou inclua `wirekit/container.h` diretamente); sem isso, `wirekit::Container` não existe e `Hub` não muda. O modo padrão usa threads; em GCC/Linux, compile com `-pthread`. Aplicações estritamente single-thread podem definir `WIREKIT_SINGLE_THREAD` em todas as unidades de tradução para remover locks e a thread de coleta; nesse modo, chame `collectGarbage()` quando quiser coletar canais sem handles externos.
+Inclua `wirekit/wirekit.h` no projeto e adicione `src/include` ao include path (`-Isrc/include`). O requisito mínimo é C++17. Para habilitar o container DI, defina `WIREKIT_ENABLE_DI` antes do include (ou inclua `wirekit/container.h` diretamente); sem isso, `wirekit::Container` não existe e `Hub` não muda. O modo padrão é seguro para uso concorrente e protege o registro com mutex. Aplicações estritamente single-thread podem definir `WIREKIT_SINGLE_THREAD` em todas as unidades de tradução para remover os locks; nesse modo, assim como no padrão, chame `collectGarbage()` para remover canais vazios sem handles externos.
 
 A biblioteca não possui dependências externas. O [guia da API](docs/API.md) descreve os canais, as fábricas, o despacho de métodos e a integração. O [`src/examples/hub/hub_example.cpp`](src/examples/hub/hub_example.cpp) é um roteiro comentado para quem está conhecendo o padrão.
 
@@ -113,13 +113,18 @@ cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 cmake --build build --target run_benchmarks
+cmake --install build --prefix /tmp/wirekit-install
 
 # ASan + UBSan
 cmake -S . -B build-san -DWIREKIT_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-san && ctest --test-dir build-san --output-on-failure
+
+# TSan (use a separate build directory)
+cmake -S . -B build-tsan -DWIREKIT_THREAD_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-tsan && ctest --test-dir build-tsan --output-on-failure
 ```
 
-Opções: `WIREKIT_BUILD_TESTS`, `WIREKIT_BUILD_EXAMPLES`, `WIREKIT_BUILD_BENCHMARKS` (`ON` quando o Wirekit é o projeto principal, `OFF` como subprojeto) e `WIREKIT_SANITIZE` (`OFF`). Os testes mantêm os `assert` ativos mesmo em `Release`. Para usar a biblioteca em outro projeto CMake: `add_subdirectory(wirekit)` e `target_link_libraries(seu_alvo PRIVATE wirekit::wirekit)` (multithread, liga as threads) ou `wirekit::single_thread` (define `WIREKIT_SINGLE_THREAD` para quem o usa e dispensa threads).
+Opções: `WIREKIT_BUILD_TESTS`, `WIREKIT_BUILD_EXAMPLES` e `WIREKIT_BUILD_BENCHMARKS` (`ON` quando o Wirekit é o projeto principal, `OFF` como subprojeto), além de `WIREKIT_SANITIZE` (ASan+UBSan) e `WIREKIT_THREAD_SANITIZE` (TSan), que não podem ser habilitadas juntas. Os testes mantêm os `assert` ativos mesmo em `Release`. Para consumir via CMake, use `add_subdirectory(wirekit)` ou instale e chame `find_package(wirekit CONFIG REQUIRED)`; os alvos exportados são `wirekit::wirekit` (multithread, liga as threads) e `wirekit::single_thread` (define `WIREKIT_SINGLE_THREAD`).
 
 Ou, sem CMake, direto com o compilador:
 
@@ -138,13 +143,11 @@ O segundo teste usa `WIREKIT_SINGLE_THREAD` e compila sem `-pthread`. Essa macro
 
 ## Como modificar
 
-O exemplo separa responsabilidades em `src/examples/hub/`: `iuser.h` define a interface, `user_staff.*` e `user_normal.*` contêm implementações, e `user_service.*` implementa a fábrica. A macro `WIREKIT_DECLARE_FACTORY(UserService, IUser)` resume a declaração do hub, mantendo a regra de seleção no `.cpp`. O caller passado a `addInstance(channel, caller)` não é retido; [`registration_modes.cpp`](src/examples/hub/registration_modes.cpp) demonstra registro por cópia e por `shared_ptr`.
-
-Alterações nos corpos `.cpp` exigem recompilar essa unidade e relinkar a aplicação. Alterações em headers compartilhados, incluindo `wirekit/wirekit.h`, exigem recompilar as unidades que os incluem. Consulte o [guia da API](docs/API.md) para detalhes de overloads, ownership, concorrência e benchmarks.
+O caller passado a `addInstance(channel, caller)` não é retido; [`registration_modes.cpp`](src/examples/hub/registration_modes.cpp) demonstra registro por cópia e por `shared_ptr`. Alterações nos corpos `.cpp` exigem recompilar essa unidade e relinkar a aplicação. Alterações em headers compartilhados exigem recompilar as unidades que os incluem.
 
 ## Estado da implementação
 
-O container DI é experimental: a API pode mudar. Ainda não há ciclo de vida por escopo (por requisição) nem containers filhos. O projeto e a API ainda estão em desenvolvimento. Consulte o [roadmap](ROADMAP.md) para acompanhar as melhorias.
+O container DI é experimental: a API pode mudar. Ainda não há ciclo de vida por escopo (por requisição) nem containers filhos. Consulte o [roadmap](ROADMAP.md) para itens planejados e o [changelog](CHANGELOG.md) para alterações realizadas.
 
 ## Estrutura do projeto
 
@@ -156,23 +159,6 @@ src/examples/hub/        exemplo do Hub
 src/examples/container/  exemplo do Container (DI)
 docs/              guia da API
 ```
-
-## Nomes antigos
-
-| Antes | Agora |
-|---|---|
-| `service::ServiceProvider<T>` | `wirekit::Hub<T>` |
-| `service::Context`, `ContextPtr` | `wirekit::Channel`, `ChannelPtr` |
-| `registerContext`, `findContext` | `registerChannel`, `findChannel` |
-| `getContext()` | `getName()` |
-| `getNewInstance` | `createFor` |
-| `Container::make<T>()` | `Container::create<T>()` |
-| `SERVICE_PROVIDER_SINGLE_THREAD` | `WIREKIT_SINGLE_THREAD` |
-| `SERVICE_PROVIDER_ENABLE_DI` | `WIREKIT_ENABLE_DI` |
-| `SERVICE_PROVIDER(Nome, Iface)` | `WIREKIT_DECLARE_FACTORY(Nome, Iface)` |
-| `serviceProv.h`, `serviceProvDI.h` | `wirekit/wirekit.h` (inclui `wirekit/hub.h` e `wirekit/container.h`) |
-
-`addInstance`, `callMethod`, `callMethodGet`, `erase`, `clear`, `bind`, `bindFactory`, `bindInstance`, `resolve` e `Lifetime` não mudaram.
 
 ## Licença
 
